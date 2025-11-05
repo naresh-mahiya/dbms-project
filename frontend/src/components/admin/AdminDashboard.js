@@ -21,7 +21,6 @@ import {
   Tab,
   Card,
   CardContent,
-  Divider,
   CircularProgress
 } from '@mui/material';
 import {
@@ -53,9 +52,7 @@ import DepartmentManagement from './DepartmentManagement';
 import EmployeeManagement from './EmployeeManagement';
 
 // Chart colors
-const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8'];
-
-
+const COLORS = ['#0088FE', '#00C49F', '#FFBB28', '#FF8042', '#8884D8', '#FF6B9D', '#C23AED'];
 
 function TabPanel(props) {
   const { children, value, index, ...other } = props;
@@ -88,8 +85,6 @@ const AdminDashboard = () => {
   const [topVisitors, setTopVisitors] = useState([]);
   const [popularDepartments, setPopularDepartments] = useState([]);
   const [popularEmployees, setPopularEmployees] = useState([]);
-  const [dailyTrend, setDailyTrend] = useState([]);
-  const [purposeStats, setPurposeStats] = useState([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState([]);
@@ -109,11 +104,7 @@ const AdminDashboard = () => {
       navigate('/admin/login');
       return;
     }
-    fetchStatistics();
-    fetchTopVisitors();
-    fetchDepartmentStats();
-    fetchDailyReport();
-    fetchMonthlyReport(selectedMonth);
+    fetchAllData();
   }, [navigate]);
 
   useEffect(() => {
@@ -122,6 +113,27 @@ const AdminDashboard = () => {
     }
   }, [tabValue]);
 
+  useEffect(() => {
+    fetchDailyReport();
+  }, [selectedDate]);
+
+  const fetchAllData = async () => {
+    setLoading(true);
+    try {
+      await Promise.all([
+        fetchStatistics(),
+        fetchTopVisitors(),
+        fetchDepartmentStats(),
+        fetchDailyReport(),
+        fetchMonthlyReport(selectedMonth)
+      ]);
+    } catch (error) {
+      console.error('Error fetching data:', error);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const fetchStatistics = async () => {
     try {
       const response = await axios.get('http://localhost:5000/api/admin/statistics', {
@@ -129,31 +141,29 @@ const AdminDashboard = () => {
       });
       setStatistics(response.data.statistics);
     } catch (error) {
+      console.error('Error fetching statistics:', error);
       showSnackbar('Error fetching statistics', 'error');
     }
   };
 
   const fetchTopVisitors = async () => {
-    console.log('Fetching top visitors...');
     try {
       const response = await axios.get('http://localhost:5000/api/visitors/top-visitors', {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      console.log('Top visitors data:', response.data.visitors);
       setTopVisitors(Array.isArray(response.data.visitors) ? response.data.visitors : []);
     } catch (error) {
+      console.error('Error fetching top visitors:', error);
       showSnackbar('Error fetching top visitors', 'error');
       setTopVisitors([]);
     }
   };
 
   const fetchDepartmentStats = async () => {
-    console.log('Fetching department stats...');
     try {
       const response = await axios.get('http://localhost:5000/api/admin/department-stats', {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      console.log('Department stats:', response.data.stats);
       setDepartmentStats(Array.isArray(response.data.stats) ? response.data.stats : []);
     } catch (error) {
       console.error('Error fetching department stats:', error);
@@ -170,6 +180,7 @@ const AdminDashboard = () => {
       );
       setDailyReport(response.data.report);
     } catch (error) {
+      console.error('Error fetching daily report:', error);
       showSnackbar('Error fetching daily report', 'error');
     }
   };
@@ -181,14 +192,13 @@ const AdminDashboard = () => {
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
       );
 
-      // Process the data to match the expected format for the chart
       const arr = Array.isArray(response.data) ? response.data : [];
       const processedData = arr.map(item => ({
         date: new Date(item.date).getDate(),
         total_visits: parseInt(item.total_visits) || 0,
         total_checkins: parseInt(item.total_checkins) || 0,
         total_checkouts: parseInt(item.total_checkouts) || 0,
-        label: `${new Date(item.date).getDate()}`
+        label: `Day ${new Date(item.date).getDate()}`
       }));
 
       setMonthlyReport(processedData);
@@ -208,16 +218,17 @@ const AdminDashboard = () => {
       const d = response.data?.data || {};
       setPopularDepartments(Array.isArray(d.popularDepartments) ? d.popularDepartments : []);
       setPopularEmployees(Array.isArray(d.popularEmployees) ? d.popularEmployees : []);
-      setLoading(false);
     } catch (error) {
+      console.error('Error fetching visitor statistics:', error);
       setPopularDepartments([]);
       setPopularEmployees([]);
+    } finally {
       setLoading(false);
     }
   };
 
   const handleSearch = async () => {
-    if (!searchQuery) {
+    if (!searchQuery.trim()) {
       showSnackbar('Please enter a name or email to search', 'warning');
       return;
     }
@@ -226,11 +237,12 @@ const AdminDashboard = () => {
         `http://localhost:5000/api/visitors/search-visitor?name=${searchQuery}`,
         { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } },
       );
-      setSearchResults(response.data.visitors);
-      if (response.data.visitors.length === 0) {
+      setSearchResults(response.data.visitors || []);
+      if (!response.data.visitors || response.data.visitors.length === 0) {
         showSnackbar('No visitors found', 'info');
       }
     } catch (error) {
+      console.error('Error searching visitor:', error);
       showSnackbar('Error searching visitor', 'error');
     }
   };
@@ -254,7 +266,6 @@ const AdminDashboard = () => {
 
   const handleTabChange = (event, newValue) => {
     setTabValue(newValue);
-    // Update URL with tab parameter
     const tabNames = ['dashboard', 'departments', 'employees', 'reports'];
     navigate(`/admin/dashboard?tab=${tabNames[newValue]}`);
   };
@@ -269,11 +280,29 @@ const AdminDashboard = () => {
     }
   }, [location.search]);
 
+  // Calculate monthly totals
+  const monthlyTotals = monthlyReport.reduce((acc, day) => ({
+    total_visits: acc.total_visits + day.total_visits,
+    total_checkins: acc.total_checkins + day.total_checkins,
+    total_checkouts: acc.total_checkouts + day.total_checkouts
+  }), { total_visits: 0, total_checkins: 0, total_checkouts: 0 });
+
   return (
     <React.Fragment>
       <Container maxWidth="lg" sx={{ mt: 4, mb: 4 }}>
-        {/* Header with Logout */}
+        {/* Header with Tabs and Logout */}
         <Box sx={{ borderBottom: 1, borderColor: 'divider', mb: 3 }}>
+          <Stack direction="row" justifyContent="space-between" alignItems="center" sx={{ mb: 2 }}>
+            <Typography variant="h4">Admin Dashboard</Typography>
+            <Button
+              variant="contained"
+              color="secondary"
+              onClick={handleLogout}
+              startIcon={<PersonIcon />}
+            >
+              Logout
+            </Button>
+          </Stack>
           <Tabs
             value={tabValue}
             onChange={handleTabChange}
@@ -286,16 +315,6 @@ const AdminDashboard = () => {
             <Tab icon={<PeopleIcon />} label="Employees" {...a11yProps(2)} />
             <Tab icon={<BarChartIcon />} label="Reports" {...a11yProps(3)} />
           </Tabs>
-          <Box sx={{ display: 'flex', justifyContent: 'flex-end', mb: 2 }}>
-            <Button
-              variant="contained"
-              color="secondary"
-              onClick={handleLogout}
-              startIcon={<PersonIcon />}
-            >
-              Logout
-            </Button>
-          </Box>
         </Box>
 
         {/* Dashboard Tab */}
@@ -305,234 +324,301 @@ const AdminDashboard = () => {
               <CircularProgress />
             </Box>
           ) : (
-            <Grid container spacing={3}>
+            <>
               {/* Statistics Cards */}
-              <Grid item xs={12} md={6} lg={3}>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6">Total Visitors</Typography>
-                  <Typography variant="h4">{statistics?.total_visitors || 0}</Typography>
-                </Paper>
+              <Grid container spacing={3} sx={{ mb: 3 }}>
+                <Grid item xs={12} md={6} lg={3}>
+                  <Paper sx={{ p: 2 }}>
+                    <Typography variant="h6" color="text.secondary">Total Visitors</Typography>
+                    <Typography variant="h4">{statistics?.total_visitors || 0}</Typography>
+                  </Paper>
+                </Grid>
+                <Grid item xs={12} md={6} lg={3}>
+                  <Paper sx={{ p: 2 }}>
+                    <Typography variant="h6" color="text.secondary">Current Visitors</Typography>
+                    <Typography variant="h4">{statistics?.current_visitors || 0}</Typography>
+                  </Paper>
+                </Grid>
+                <Grid item xs={12} md={6} lg={3}>
+                  <Paper sx={{ p: 2 }}>
+                    <Typography variant="h6" color="text.secondary">Pending</Typography>
+                    <Typography variant="h4">{statistics?.pending_visitors || 0}</Typography>
+                  </Paper>
+                </Grid>
+                <Grid item xs={12} md={6} lg={3}>
+                  <Paper sx={{ p: 2 }}>
+                    <Typography variant="h6" color="text.secondary">Completed Visits</Typography>
+                    <Typography variant="h4">{statistics?.completed_visits || 0}</Typography>
+                  </Paper>
+                </Grid>
               </Grid>
-              <Grid item xs={12} md={6} lg={3}>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6">Current Visitors</Typography>
-                  <Typography variant="h4">{statistics?.current_visitors || 0}</Typography>
-                </Paper>
-              </Grid>
-              <Grid item xs={12} md={6} lg={3}>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6">Pending</Typography>
-                  <Typography variant="h4">{statistics?.pending_visitors || 0}</Typography>
-                </Paper>
-              </Grid>
-              <Grid item xs={12} md={6} lg={3}>
-                <Paper sx={{ p: 2 }}>
-                  <Typography variant="h6">Completed Visits</Typography>
-                  <Typography variant="h4">{statistics?.completed_visits || 0}</Typography>
-                </Paper>
-              </Grid>
-            </Grid>
-          )}
 
-          {/* Department Statistics Card */}
-          <Paper sx={{ p: 2, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>Department Visit Statistics</Typography>
-            
-            {/* Table */}
-            <TableContainer sx={{ mb: 3 }}>
-              <Table>
-                <TableHead>
-                  <TableRow>
-                    <TableCell>Department</TableCell>
-                    <TableCell align="right">Total Visits</TableCell>
-                    <TableCell align="right">Percentage</TableCell>
-                  </TableRow>
-                </TableHead>
-                <TableBody>
-                  {(departmentStats ?? []).map((stat, idx) => (
-                    <TableRow key={stat.department ?? stat.department_name ?? idx}>
-                      <TableCell>{stat.department ?? stat.department_name}</TableCell>
-                      <TableCell align="right">{stat.visit_count}</TableCell>
-                      <TableCell align="right">{stat.percentage}%</TableCell>
-                    </TableRow>
-                  ))}
-                </TableBody>
-              </Table>
-            </TableContainer>
-
-            {/* Pie Chart */}
-            <Box sx={{ height: 400 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <PieChart>
-                  <Pie
-                    data={departmentStats}
-                    dataKey="visit_count"
-                    nameKey="department"
-                    cx="50%"
-                    cy="50%"
-                    outerRadius={150}
-                    label={(entry) => `${entry.department} (${entry.percentage}%)`}
-                  >
-                    {departmentStats.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Pie>
-                  <Tooltip />
-                  <Legend />
-                </PieChart>
-              </ResponsiveContainer>
-            </Box>
-          </Paper>
-
-          {/* Top 5 Visitors Card */}
-          <Paper sx={{ p: 2, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>Top 5 Most Frequent Visitors</Typography>
-            
-            {/* Table */}
-            {topVisitors && (topVisitors ?? []).map && (
-              <TableContainer sx={{ mb: 3 }}>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Name</TableCell>
-                      <TableCell>Email</TableCell>
-                      <TableCell align="right">Visit Count</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {(topVisitors ?? []).map((visitor, index) => (
-                      <TableRow key={visitor.name + index}>
-                        <TableCell>{visitor.name}</TableCell>
-                        <TableCell>{visitor.email || '-'}</TableCell>
-                        <TableCell align="right">{visitor.visit_count}</TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-
-            {/* Bar Chart */}
-            <Box sx={{ height: 400 }}>
-              <ResponsiveContainer width="100%" height="100%">
-                <BarChart data={topVisitors}>
-                  <CartesianGrid strokeDasharray="3 3" />
-                  <XAxis dataKey="name" />
-                  <YAxis />
-                  <Tooltip />
-                  <Legend />
-                  <Bar dataKey="visit_count" name="Visit Count" fill="#8884d8">
-                    {topVisitors.map((entry, index) => (
-                      <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                    ))}
-                  </Bar>
-                </BarChart>
-              </ResponsiveContainer>
-            </Box>
-          </Paper>
-
-          {/* Visitor Search Card */}
-          <Paper sx={{ p: 2, mb: 3 }}>
-            <Typography variant="h6" gutterBottom>Search Visitor History</Typography>
-            <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
-              <TextField
-                fullWidth
-                label="Name"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                size="small"
-              />
-              <Button 
-                variant="contained" 
-                onClick={handleSearch}
-                startIcon={<SearchIcon />}
-                sx={{ minWidth: 120 }}
-              >
-                Search
-              </Button>
-            </Stack>
-
-            {searchResults && searchResults.length > 0 && (
-              <TableContainer>
-                <Table>
-                  <TableHead>
-                    <TableRow>
-                      <TableCell>Name</TableCell>
-                      <TableCell>Email</TableCell>
-                      <TableCell align="right">Total Visits</TableCell>
-                      <TableCell>Departments Visited</TableCell>
-                      <TableCell>Visit Dates</TableCell>
-                    </TableRow>
-                  </TableHead>
-                  <TableBody>
-                    {searchResults.map((visitor, index) => (
-                      <TableRow key={index}>
-                        <TableCell>{visitor.name}</TableCell>
-                        <TableCell>{visitor.email}</TableCell>
-                        <TableCell align="right">{visitor.total_visits}</TableCell>
-                        <TableCell>{visitor.departments_visited}</TableCell>
-                        <TableCell>
-                          {visitor.visit_dates.split(',').map((date, i) => (
-                            <div key={i}>{date}</div>
+              {/* Department Statistics */}
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Typography variant="h6" gutterBottom>Department Visit Statistics</Typography>
+                
+                {departmentStats.length === 0 ? (
+                  <Alert severity="info" sx={{ mt: 2 }}>No department statistics available</Alert>
+                ) : (
+                  <>
+                    {/* Table */}
+                    <TableContainer sx={{ mb: 3 }}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell><strong>Department</strong></TableCell>
+                            <TableCell align="right"><strong>Total Visits</strong></TableCell>
+                            <TableCell align="right"><strong>Percentage</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {departmentStats.map((stat, idx) => (
+                            <TableRow key={stat.id || idx}>
+                              <TableCell>{stat.department || stat.department_name || 'Unknown'}</TableCell>
+                              <TableCell align="right">{stat.visit_count || 0}</TableCell>
+                              <TableCell align="right">{stat.percentage || 0}%</TableCell>
+                            </TableRow>
                           ))}
-                        </TableCell>
-                      </TableRow>
-                    ))}
-                  </TableBody>
-                </Table>
-              </TableContainer>
-            )}
-            {searchResults && searchResults.length === 0 && (
-              <Alert severity="info" sx={{ mt: 2 }}>No visitors found matching the search criteria</Alert>
-            )}
-          </Paper>
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
 
-          {/* Daily Report */}
-          <Paper sx={{ p: 2, mb: 3 }}>
-            <Typography variant="h5" gutterBottom>Daily Report</Typography>
-            {dailyReport && (
-              <Box sx={{ mt: 2 }}>
-                <Typography>Check-ins: {dailyReport.total_checkins}</Typography>
-                <Typography>Check-outs: {dailyReport.total_checkouts}</Typography>
-              </Box>
-            )}
-          </Paper>
+                    {/* Pie Chart */}
+                    <Box sx={{ height: 400 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <PieChart>
+                          <Pie
+                            data={departmentStats}
+                            dataKey="visit_count"
+                            nameKey="department"
+                            cx="50%"
+                            cy="50%"
+                            outerRadius={120}
+                            label={(entry) => `${entry.department}: ${entry.percentage}%`}
+                          >
+                            {departmentStats.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Pie>
+                          <Tooltip />
+                          <Legend />
+                        </PieChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </>
+                )}
+              </Paper>
 
-          {/* Monthly Report */}
-          <Paper sx={{ p: 2, mb: 3 }}>
-            <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
-              <Typography variant="h5">Monthly Report</Typography>
-              <TextField
-                type="month"
-                value={selectedMonth}
-                onChange={(e) => {
-                  setSelectedMonth(e.target.value);
-                  fetchMonthlyReport(e.target.value);
-                }}
-                size="small"
-                sx={{ minWidth: 200 }}
-              />
-            </Stack>
-            
-            {monthlyReport.length > 0 && (
-              <Box>
-                <Typography variant="h6" gutterBottom sx={{ mt: 2, color: 'text.secondary' }}>
-                  Monthly Statistics (Past {monthlyReport[0].date} Days)
-                </Typography>
-                <Stack spacing={2} sx={{ mt: 2 }}>
-                  <Typography>
-                    Total Visitors: {monthlyReport[0].total_visitors}
-                  </Typography>
-                  <Typography>
-                    Total Check-ins: {monthlyReport[0].total_checkins}
-                  </Typography>
-                  <Typography>
-                    Total Check-outs: {monthlyReport[0].total_checkouts}
-                  </Typography>
+              {/* Top 5 Visitors */}
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Typography variant="h6" gutterBottom>Top 5 Most Frequent Visitors</Typography>
+                
+                {topVisitors.length === 0 ? (
+                  <Alert severity="info" sx={{ mt: 2 }}>No visitor data available</Alert>
+                ) : (
+                  <>
+                    {/* Table */}
+                    <TableContainer sx={{ mb: 3 }}>
+                      <Table>
+                        <TableHead>
+                          <TableRow>
+                            <TableCell><strong>Name</strong></TableCell>
+                            <TableCell><strong>Email</strong></TableCell>
+                            <TableCell align="right"><strong>Visit Count</strong></TableCell>
+                          </TableRow>
+                        </TableHead>
+                        <TableBody>
+                          {topVisitors.map((visitor, index) => (
+                            <TableRow key={visitor.name + index}>
+                              <TableCell>{visitor.name}</TableCell>
+                              <TableCell>{visitor.email || '-'}</TableCell>
+                              <TableCell align="right">{visitor.visit_count}</TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </TableContainer>
+
+                    {/* Bar Chart */}
+                    <Box sx={{ height: 400 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <BarChart data={topVisitors}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="name" />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Bar dataKey="visit_count" name="Visit Count" fill="#8884d8">
+                            {topVisitors.map((entry, index) => (
+                              <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                            ))}
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </>
+                )}
+              </Paper>
+
+              {/* Visitor Search */}
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Typography variant="h6" gutterBottom>Search Visitor History</Typography>
+                <Stack direction={{ xs: 'column', sm: 'row' }} spacing={2} sx={{ mb: 2 }}>
+                  <TextField
+                    fullWidth
+                    label="Name"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    size="small"
+                    onKeyPress={(e) => {
+                      if (e.key === 'Enter' && searchQuery.trim()) {
+                        handleSearch();
+                      }
+                    }}
+                  />
+                  <Button 
+                    variant="contained" 
+                    onClick={handleSearch}
+                    startIcon={<SearchIcon />}
+                    sx={{ minWidth: 120 }}
+                    disabled={!searchQuery.trim()}
+                  >
+                    Search
+                  </Button>
                 </Stack>
-              </Box>
-            )}
-          </Paper>
+
+                {searchResults && searchResults.length > 0 && (
+                  <TableContainer>
+                    <Table>
+                      <TableHead>
+                        <TableRow>
+                          <TableCell>Name</TableCell>
+                          <TableCell>Email</TableCell>
+                          <TableCell align="right">Total Visits</TableCell>
+                          <TableCell>Departments Visited</TableCell>
+                          <TableCell>Visit Dates</TableCell>
+                        </TableRow>
+                      </TableHead>
+                      <TableBody>
+                        {searchResults.map((visitor, index) => (
+                          <TableRow key={index}>
+                            <TableCell>{visitor.name}</TableCell>
+                            <TableCell>{visitor.email || '-'}</TableCell>
+                            <TableCell align="right">{visitor.total_visits}</TableCell>
+                            <TableCell>{visitor.departments_visited}</TableCell>
+                            <TableCell>
+                              {visitor.visit_dates && visitor.visit_dates.split(',').map((date, i) => (
+                                <div key={i}>{date}</div>
+                              ))}
+                            </TableCell>
+                          </TableRow>
+                        ))}
+                      </TableBody>
+                    </Table>
+                  </TableContainer>
+                )}
+              </Paper>
+
+              {/* Daily Report */}
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+                  <Typography variant="h6">Daily Report</Typography>
+                  <TextField
+                    type="date"
+                    value={selectedDate}
+                    onChange={(e) => setSelectedDate(e.target.value)}
+                    size="small"
+                    sx={{ minWidth: 200 }}
+                  />
+                </Stack>
+                {dailyReport ? (
+                  <Grid container spacing={2}>
+                    <Grid item xs={12} sm={4}>
+                      <Box sx={{ p: 2, bgcolor: 'primary.light', borderRadius: 1 }}>
+                        <Typography variant="body2" color="primary.contrastText">Total Visits</Typography>
+                        <Typography variant="h5" color="primary.contrastText">{dailyReport.total_visits || 0}</Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Box sx={{ p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+                        <Typography variant="body2" color="success.contrastText">Check-ins</Typography>
+                        <Typography variant="h5" color="success.contrastText">{dailyReport.total_checkins || 0}</Typography>
+                      </Box>
+                    </Grid>
+                    <Grid item xs={12} sm={4}>
+                      <Box sx={{ p: 2, bgcolor: 'secondary.light', borderRadius: 1 }}>
+                        <Typography variant="body2" color="secondary.contrastText">Check-outs</Typography>
+                        <Typography variant="h5" color="secondary.contrastText">{dailyReport.total_checkouts || 0}</Typography>
+                      </Box>
+                    </Grid>
+                  </Grid>
+                ) : (
+                  <Alert severity="info">No data available for selected date</Alert>
+                )}
+              </Paper>
+
+              {/* Monthly Report */}
+              <Paper sx={{ p: 3, mb: 3 }}>
+                <Stack direction="row" alignItems="center" spacing={2} sx={{ mb: 2 }}>
+                  <Typography variant="h6">Monthly Report</Typography>
+                  <TextField
+                    type="month"
+                    value={selectedMonth}
+                    onChange={(e) => {
+                      setSelectedMonth(e.target.value);
+                      fetchMonthlyReport(e.target.value);
+                    }}
+                    size="small"
+                    sx={{ minWidth: 200 }}
+                  />
+                </Stack>
+                
+                {monthlyReport.length > 0 ? (
+                  <>
+                    {/* Summary Stats */}
+                    <Grid container spacing={2} sx={{ mb: 3 }}>
+                      <Grid item xs={12} sm={4}>
+                        <Box sx={{ p: 2, bgcolor: 'info.light', borderRadius: 1 }}>
+                          <Typography variant="body2" color="info.contrastText">Total Visits</Typography>
+                          <Typography variant="h5" color="info.contrastText">{monthlyTotals.total_visits}</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} sm={4}>
+                        <Box sx={{ p: 2, bgcolor: 'success.light', borderRadius: 1 }}>
+                          <Typography variant="body2" color="success.contrastText">Total Check-ins</Typography>
+                          <Typography variant="h5" color="success.contrastText">{monthlyTotals.total_checkins}</Typography>
+                        </Box>
+                      </Grid>
+                      <Grid item xs={12} sm={4}>
+                        <Box sx={{ p: 2, bgcolor: 'warning.light', borderRadius: 1 }}>
+                          <Typography variant="body2" color="warning.contrastText">Total Check-outs</Typography>
+                          <Typography variant="h5" color="warning.contrastText">{monthlyTotals.total_checkouts}</Typography>
+                        </Box>
+                      </Grid>
+                    </Grid>
+
+                    {/* Line Chart */}
+                    <Box sx={{ height: 400 }}>
+                      <ResponsiveContainer width="100%" height="100%">
+                        <LineChart data={monthlyReport}>
+                          <CartesianGrid strokeDasharray="3 3" />
+                          <XAxis dataKey="date" label={{ value: 'Day of Month', position: 'insideBottom', offset: -5 }} />
+                          <YAxis />
+                          <Tooltip />
+                          <Legend />
+                          <Line type="monotone" dataKey="total_visits" name="Total Visits" stroke="#8884d8" strokeWidth={2} />
+                          <Line type="monotone" dataKey="total_checkins" name="Check-ins" stroke="#82ca9d" strokeWidth={2} />
+                          <Line type="monotone" dataKey="total_checkouts" name="Check-outs" stroke="#ffc658" strokeWidth={2} />
+                        </LineChart>
+                      </ResponsiveContainer>
+                    </Box>
+                  </>
+                ) : (
+                  <Alert severity="info">No data available for selected month</Alert>
+                )}
+              </Paper>
+            </>
+          )}
         </TabPanel>
 
         {/* Departments Tab */}
@@ -547,58 +633,74 @@ const AdminDashboard = () => {
 
         {/* Reports Tab */}
         <TabPanel value={tabValue} index={3}>
-          <Typography variant="h6" gutterBottom>Reports & Analytics</Typography>
-          <Grid container spacing={3}>
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>Department Visit Distribution</Typography>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <PieChart>
-                      <Pie
-                        data={popularDepartments}
-                        dataKey="visit_count"
-                        nameKey="department_name"
-                        cx="50%"
-                        cy="50%"
-                        outerRadius={100}
-                        fill="#8884d8"
-                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
-                      >
-                        {popularDepartments.map((entry, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip />
-                      <Legend />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            </Grid>
-            
-            <Grid item xs={12} md={6}>
-              <Card>
-                <CardContent>
-                  <Typography variant="h6" gutterBottom>Top Performing Employees</Typography>
-                  <ResponsiveContainer width="100%" height={300}>
-                    <BarChart
-                      data={popularEmployees}
-                      layout="vertical"
-                      margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
-                    >
-                      <CartesianGrid strokeDasharray="3 3" />
-                      <XAxis type="number" />
-                      <YAxis dataKey="employee_name" type="category" width={150} />
-                      <Tooltip />
-                      <Legend />
-                      <Bar dataKey="visit_count" name="Total Visits" fill="#82ca9d" />
-                    </BarChart>
-                  </ResponsiveContainer>
-                </CardContent>
-              </Card>
-            </Grid>
-          </Grid>
+          {loading ? (
+            <Box display="flex" justifyContent="center" alignItems="center" minHeight="200px">
+              <CircularProgress />
+            </Box>
+          ) : (
+            <>
+              <Typography variant="h5" gutterBottom sx={{ mb: 3 }}>Reports & Analytics</Typography>
+              <Grid container spacing={3}>
+                <Grid item xs={12} md={6}>
+                  <Card sx={{ height: '100%' }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>Department Visit Distribution</Typography>
+                      {popularDepartments.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={400}>
+                          <PieChart>
+                            <Pie
+                              data={popularDepartments}
+                              dataKey="visit_count"
+                              nameKey="department_name"
+                              cx="50%"
+                              cy="50%"
+                              outerRadius={100}
+                              fill="#8884d8"
+                              label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(1)}%`}
+                            >
+                              {popularDepartments.map((entry, index) => (
+                                <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                              ))}
+                            </Pie>
+                            <Tooltip />
+                            <Legend />
+                          </PieChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <Alert severity="info">No department data available</Alert>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Grid>
+                
+                <Grid item xs={12} md={6}>
+                  <Card sx={{ height: '100%' }}>
+                    <CardContent>
+                      <Typography variant="h6" gutterBottom>Top Performing Employees</Typography>
+                      {popularEmployees.length > 0 ? (
+                        <ResponsiveContainer width="100%" height={400}>
+                          <BarChart
+                            data={popularEmployees}
+                            layout="vertical"
+                            margin={{ top: 5, right: 30, left: 20, bottom: 5 }}
+                          >
+                            <CartesianGrid strokeDasharray="3 3" />
+                            <XAxis type="number" />
+                            <YAxis dataKey="employee_name" type="category" width={150} />
+                            <Tooltip />
+                            <Legend />
+                            <Bar dataKey="visit_count" name="Total Visits" fill="#82ca9d" />
+                          </BarChart>
+                        </ResponsiveContainer>
+                      ) : (
+                        <Alert severity="info">No employee data available</Alert>
+                      )}
+                    </CardContent>
+                  </Card>
+                </Grid>
+              </Grid>
+            </>
+          )}
         </TabPanel>
         
         <Snackbar

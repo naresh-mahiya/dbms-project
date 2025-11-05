@@ -5,54 +5,6 @@ const jwt = require('jsonwebtoken');
 const db = require('../db');
 const { v4: uuidv4 } = require('uuid');
 
-// Monthly visitor statistics
-router.get('/visitor-stats/monthly', async (req, res) => {
-  const { month } = req.query;
-  try {
-    const [stats] = await db.execute(`
-      SELECT 
-        DATE(v.checkin_time) as date,
-        COUNT(DISTINCT v.id) as total_visits,
-        COUNT(DISTINCT CASE WHEN v.status = 'Checked-In' THEN v.id END) as total_checkins,
-        COUNT(DISTINCT CASE WHEN v.status = 'Checked-Out' THEN v.id END) as total_checkouts
-      FROM visits v
-      WHERE v.checkin_time IS NOT NULL AND DATE_FORMAT(v.checkin_time, '%Y-%m') = ?
-      GROUP BY DATE(v.checkin_time)
-      ORDER BY date ASC
-    `, [month]);
-    res.json(Array.isArray(stats) ? stats : []);
-  } catch (error) {
-    console.error('Error fetching monthly visitor stats:', error);
-    res.status(500).json([]); // always an array
-  }
-});
-
-// Department statistics
-router.get('/department-stats', async (req, res) => {
-  try {
-    const [stats] = await db.execute(`
-      SELECT 
-        d.id,
-        d.name as department_name,
-        COUNT(v.id) as total_visits,
-        COUNT(CASE WHEN v.status = 'Checked-In' THEN v.id END) as active_visits,
-        COUNT(e.id) as employee_count
-      FROM departments d
-      LEFT JOIN employees e ON d.id = e.department_id
-      LEFT JOIN visits v ON e.id = v.employee_id
-      GROUP BY d.id, d.name
-      ORDER BY total_visits DESC
-    `);
-    
-    res.json({ stats: Array.isArray(stats) ? stats : [] });
-  } catch (error) {
-    console.error('Error fetching department stats:', error);
-    res.status(500).json({ stats: [] });
-  }
-});
-
-
-
 // Admin login
 router.post('/login', async (req, res) => {
   const { username, password } = req.body;
@@ -103,20 +55,75 @@ router.post('/login', async (req, res) => {
   }
 });
 
-// Get daily check-in/check-out report
+// Get visitor statistics - FIXED
+router.get('/statistics', async (req, res) => {
+  try {
+    const [stats] = await db.execute(
+      `SELECT 
+        COUNT(DISTINCT vis.id) as total_visitors,
+        COUNT(CASE WHEN v.status = 'Pending' THEN 1 END) as pending_visitors,
+        COUNT(CASE WHEN v.status = 'Checked-In' THEN 1 END) as current_visitors,
+        COUNT(CASE WHEN v.status = 'Checked-Out' THEN 1 END) as completed_visits
+      FROM visitors vis
+      LEFT JOIN visits v ON vis.id = v.visitor_id`
+    );
+    res.json({ success: true, statistics: stats[0] });
+  } catch (error) {
+    console.error('Error fetching statistics:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Error fetching statistics',
+      error: error.message
+    });
+  }
+});
+
+// Department statistics - 
+router.get('/department-stats', async (req, res) => {
+  try {
+    const [stats] = await db.execute(`
+      SELECT 
+        d.id,
+        d.name as department,
+        d.name as department_name,
+        COUNT(v.id) as visit_count,
+        ROUND(
+          COUNT(v.id) * 100.0 / (SELECT COUNT(*) FROM visits), 
+          2
+        ) as percentage
+      FROM departments d
+      INNER JOIN employees e ON d.id = e.department_id
+      INNER JOIN visits v ON e.id = v.employee_id
+      GROUP BY d.id, d.name
+      ORDER BY visit_count DESC
+    `);
+    
+    console.log('Department stats from DB:', stats);
+    res.json({ success: true, stats: Array.isArray(stats) ? stats : [] });
+  } catch (error) {
+    console.error('Error fetching department stats:', error);
+    res.status(500).json({ success: false, stats: [] });
+  }
+});
+
+// Get daily check-in/check-out report - FIXED
 router.get('/daily-report', async (req, res) => {
   const { date } = req.query;
+  const reportDate = date || new Date().toISOString().split('T')[0];
+  
   try {
     const [report] = await db.execute(
       `SELECT 
-        COUNT(CASE WHEN status = 'Checked-In' THEN 1 END) as total_checkins,
-        COUNT(CASE WHEN status = 'Checked-Out' THEN 1 END) as total_checkouts
-      FROM visitors 
-      WHERE DATE(created_at) = ?`,
-      [date]
+        COUNT(DISTINCT v.id) as total_visits,
+        SUM(CASE WHEN v.checkin_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkins,
+        SUM(CASE WHEN v.checkout_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkouts
+      FROM visits v
+      WHERE DATE(v.created_at) = ?`,
+      [reportDate]
     );
     res.json({ success: true, report: report[0] });
   } catch (error) {
+    console.error('Error generating daily report:', error);
     res.status(500).json({
       success: false,
       message: 'Error generating daily report',
@@ -125,24 +132,52 @@ router.get('/daily-report', async (req, res) => {
   }
 });
 
-// Get monthly visitor report
+// Monthly visitor statistics - FIXED
+router.get('/visitor-stats/monthly', async (req, res) => {
+  const { month } = req.query;
+  const targetMonth = month || new Date().toISOString().slice(0, 7);
+  
+  try {
+    const [stats] = await db.execute(`
+      SELECT 
+        DATE(v.created_at) as date,
+        COUNT(DISTINCT v.id) as total_visits,
+        SUM(CASE WHEN v.checkin_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkins,
+        SUM(CASE WHEN v.checkout_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkouts
+      FROM visits v
+      WHERE DATE_FORMAT(v.created_at, '%Y-%m') = ?
+      GROUP BY DATE(v.created_at)
+      ORDER BY date ASC
+    `, [targetMonth]);
+    
+    console.log('Monthly stats from DB:', stats);
+    res.json(Array.isArray(stats) ? stats : []);
+  } catch (error) {
+    console.error('Error fetching monthly visitor stats:', error);
+    res.status(500).json([]);
+  }
+});
+
+// Get monthly visitor report - FIXED
 router.get('/monthly-report', async (req, res) => {
   const { month, year } = req.query;
   try {
     const [report] = await db.execute(
       `SELECT 
-        DATE(created_at) as date,
-        COUNT(*) as total_visitors,
-        COUNT(CASE WHEN status = 'Checked-In' THEN 1 END) as total_checkins,
-        COUNT(CASE WHEN status = 'Checked-Out' THEN 1 END) as total_checkouts
-      FROM visitors 
-      WHERE MONTH(created_at) = ? AND YEAR(created_at) = ?
-      GROUP BY DATE(created_at)
+        DATE(v.created_at) as date,
+        COUNT(DISTINCT vis.id) as total_visitors,
+        SUM(CASE WHEN v.checkin_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkins,
+        SUM(CASE WHEN v.checkout_time IS NOT NULL THEN 1 ELSE 0 END) as total_checkouts
+      FROM visits v
+      JOIN visitors vis ON v.visitor_id = vis.id
+      WHERE MONTH(v.created_at) = ? AND YEAR(v.created_at) = ?
+      GROUP BY DATE(v.created_at)
       ORDER BY date`,
       [month, year]
     );
     res.json({ success: true, report });
   } catch (error) {
+    console.error('Error generating monthly report:', error);
     res.status(500).json({
       success: false,
       message: 'Error generating monthly report',
@@ -151,22 +186,82 @@ router.get('/monthly-report', async (req, res) => {
   }
 });
 
-// Get visitor statistics
-router.get('/statistics', async (req, res) => {
+// Get Visitor Statistics - FIXED
+router.get('/visitor-statistics', async (req, res) => {
   try {
-    const [stats] = await db.execute(
-      `SELECT 
-        COUNT(*) as total_visitors,
-        COUNT(CASE WHEN status = 'Pending' THEN 1 END) as pending_visitors,
-        COUNT(CASE WHEN status = 'Checked-In' THEN 1 END) as current_visitors,
-        COUNT(CASE WHEN status = 'Checked-Out' THEN 1 END) as completed_visits
-      FROM visitors`
-    );
-    res.json({ success: true, statistics: stats[0] });
+    // Most visited departments
+    const [popularDepartments] = await db.execute(`
+      SELECT 
+        d.id,
+        d.name as department_name,
+        COUNT(DISTINCT v.id) as visit_count
+      FROM visits v
+      JOIN employees e ON v.employee_id = e.id
+      JOIN departments d ON e.department_id = d.id
+      GROUP BY d.id, d.name
+      ORDER BY visit_count DESC
+      LIMIT 5
+    `);
+
+    // Most visited employees
+    const [popularEmployees] = await db.execute(`
+      SELECT 
+        e.id,
+        e.name as employee_name,
+        d.name as department_name,
+        COUNT(DISTINCT v.id) as visit_count
+      FROM visits v
+      JOIN employees e ON v.employee_id = e.id
+      JOIN departments d ON e.department_id = d.id
+      GROUP BY e.id, e.name, d.name
+      ORDER BY visit_count DESC
+      LIMIT 10
+    `);
+
+    // Daily visitor trend (last 7 days)
+    const [dailyTrend] = await db.execute(`
+      SELECT 
+        DATE(v.created_at) as visit_date,
+        COUNT(*) as total_visits,
+        COUNT(CASE WHEN v.status = 'Checked-Out' THEN 1 END) as completed_visits
+      FROM visits v
+      WHERE v.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
+      GROUP BY DATE(v.created_at)
+      ORDER BY visit_date
+    `);
+
+    // Visitor purpose statistics
+    const [purposeStats] = await db.execute(`
+      SELECT 
+        purpose,
+        COUNT(*) as count,
+        ROUND((COUNT(*) * 100.0) / NULLIF((SELECT COUNT(*) FROM visits), 0), 1) as percentage
+      FROM visits
+      WHERE purpose IS NOT NULL
+      GROUP BY purpose
+      ORDER BY count DESC
+    `);
+
+    res.json({
+      success: true,
+      data: {
+        popularDepartments: Array.isArray(popularDepartments) ? popularDepartments : [],
+        popularEmployees: Array.isArray(popularEmployees) ? popularEmployees : [],
+        dailyTrend: Array.isArray(dailyTrend) ? dailyTrend : [],
+        purposeStats: Array.isArray(purposeStats) ? purposeStats : []
+      }
+    });
   } catch (error) {
+    console.error('Error fetching visitor statistics:', error);
     res.status(500).json({
       success: false,
-      message: 'Error fetching statistics',
+      data: {
+        popularDepartments: [],
+        popularEmployees: [],
+        dailyTrend: [],
+        purposeStats: []
+      },
+      message: 'Error fetching visitor statistics',
       error: error.message
     });
   }
@@ -353,85 +448,13 @@ router.get('/employees', async (req, res) => {
   try {
     const [employees] = await db.execute(`
       SELECT e.*, d.name as department_name 
-      FROM employees e JOIN departments d ON e.department_id = d.id
+      FROM employees e 
+      JOIN departments d ON e.department_id = d.id
       ORDER BY e.name`);
     res.json({ data: employees });
   } catch (error) {
+    console.error('Error fetching employees:', error);
     res.status(500).json({ data: [], message: 'Cannot fetch employees' });
-  }
-});
-
-// Get Visitor Statistics
-router.get('/visitor-statistics', async (req, res) => {
-  try {
-    // Most visited departments
-    const [popularDepartments] = await db.execute(`
-      SELECT 
-        d.id,
-        d.name as department_name,
-        COUNT(v.id) as visit_count
-      FROM visits v
-      JOIN employees e ON v.employee_id = e.id
-      JOIN departments d ON e.department_id = d.id
-      GROUP BY d.id, d.name
-      ORDER BY visit_count DESC
-      LIMIT 5
-    `);
-
-    // Most visited employees
-    const [popularEmployees] = await db.execute(`
-      SELECT 
-        e.id,
-        e.name as employee_name,
-        d.name as department_name,
-        COUNT(v.id) as visit_count
-      FROM visits v
-      JOIN employees e ON v.employee_id = e.id
-      JOIN departments d ON e.department_id = d.id
-      GROUP BY e.id, e.name, d.name
-      ORDER BY visit_count DESC
-      LIMIT 5
-    `);
-
-    // Daily visitor trend (last 7 days)
-    const [dailyTrend] = await db.execute(`
-      SELECT 
-        DATE(v.created_at) as visit_date,
-        COUNT(*) as total_visits,
-        COUNT(CASE WHEN v.status = 'Checked-Out' THEN 1 END) as completed_visits
-      FROM visits v
-      WHERE v.created_at >= DATE_SUB(CURDATE(), INTERVAL 7 DAY)
-      GROUP BY DATE(v.created_at)
-      ORDER BY visit_date
-    `);
-
-    // Visitor purpose statistics
-    const [purposeStats] = await db.execute(`
-      SELECT 
-        purpose,
-        COUNT(*) as count,
-        ROUND((COUNT(*) * 100.0) / (SELECT COUNT(*) FROM visits), 1) as percentage
-      FROM visits
-      GROUP BY purpose
-      ORDER BY count DESC
-    `);
-
-    res.json({
-      success: true,
-      data: {
-        popularDepartments,
-        popularEmployees,
-        dailyTrend,
-        purposeStats
-      }
-    });
-  } catch (error) {
-    console.error('Error fetching visitor statistics:', error);
-    res.status(500).json({
-      success: false,
-      message: 'Error fetching visitor statistics',
-      error: error.message
-    });
   }
 });
 
