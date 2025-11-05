@@ -28,24 +28,45 @@ const ReceptionistDashboard = () => {
   const [snackbar, setSnackbar] = useState({ open: false, message: '', severity: 'success' });
   const [visitorTokens, setVisitorTokens] = useState({});
   const [verifiedTokens, setVerifiedTokens] = useState({});
+  const [isTodayView, setIsTodayView] = useState(false);
 
+  // Fetch all visits (not only today's); you may need to change the API route to /api/visitors/search or /api/visitors?active=1
   useEffect(() => {
     const token = localStorage.getItem('token');
     if (!token) {
       navigate('/receptionist/login');
       return;
     }
-    fetchTodayVisitors();
+    fetchAllVisits();
+    setIsTodayView(false);
   }, [navigate]);
+
+  const fetchAllVisits = async () => {
+    try {
+      // Using the generic search endpoint with no filters returns all visits (or implement a custom backend route)
+      const response = await axios.get('http://localhost:5000/api/visitors/search', {
+        headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
+      });
+      setVisitors(Array.isArray(response.data.data) ? response.data.data : []);
+      setIsTodayView(false);
+    } catch (error) {
+      showSnackbar('Error fetching all visits', 'error');
+      setVisitors([]);
+      setIsTodayView(false);
+    }
+  };
 
   const fetchTodayVisitors = async () => {
     try {
       const response = await axios.get('http://localhost:5000/api/visitors/today', {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      setVisitors(response.data.visitors);
+      setVisitors(Array.isArray(response.data.data) ? response.data.data : []);
+      setIsTodayView(true);
     } catch (error) {
       showSnackbar('Error fetching visitors', 'error');
+      setVisitors([]);
+      setIsTodayView(true);
     }
   };
 
@@ -54,9 +75,10 @@ const ReceptionistDashboard = () => {
       const response = await axios.get(`http://localhost:5000/api/visitors/search?name=${searchQuery}`, {
         headers: { Authorization: `Bearer ${localStorage.getItem('token')}` }
       });
-      setVisitors(response.data.visitors);
+      setVisitors(Array.isArray(response.data.data) ? response.data.data : []);
     } catch (error) {
       showSnackbar('Error searching visitors', 'error');
+      setVisitors([]);
     }
   };
 
@@ -92,64 +114,37 @@ const ReceptionistDashboard = () => {
     }));
   };
 
-  const handleStatus = async (visitorId, newStatus) => {
+  const handleStatus = async (token, newStatus) => {
     try {
       if (newStatus === 'Checked-In') {
-        const token = visitorTokens[visitorId];
-        if (!token) {
+        const tok = visitorTokens[token];
+        if (!tok) {
           showSnackbar('Please enter visitor token first', 'error');
           return;
         }
-        if (!verifiedTokens[visitorId]) {
+        if (!verifiedTokens[token]) {
           showSnackbar('Please verify the token first', 'error');
           return;
         }
       }
-
-      const response = await axios.put(
-        `http://localhost:5000/api/visitors/status/${visitorId}`,
-        { status: newStatus, token: visitorTokens[visitorId] },
-        { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } }
-      );
-
-      // Update the visitor in the local state immediately
-      if (response.data.visitor) {
-        setVisitors(prevVisitors => 
-          prevVisitors.map(visitor => 
-            visitor.id === visitorId ? { ...visitor, ...response.data.visitor } : visitor
-          )
-        );
-      }
-
+      const response = await axios.put(`http://localhost:5000/api/visitors/visit/${token}/status`, { status: newStatus }, { headers: { Authorization: `Bearer ${localStorage.getItem('token')}` } });
+      // Update the visitor locally
+      fetchAllVisits(); // Or re-fetch today's if in today mode
       showSnackbar(`Visitor ${newStatus.toLowerCase()} successfully`, 'success');
-      
-      // Clear token after successful check-in
       if (newStatus === 'Checked-In') {
         setVisitorTokens(prev => {
           const newTokens = { ...prev };
-          delete newTokens[visitorId];
+          delete newTokens[token];
           return newTokens;
         });
         setVerifiedTokens(prev => {
           const newVerified = { ...prev };
-          delete newVerified[visitorId];
+          delete newVerified[token];
           return newVerified;
         });
       }
-      // Clear token after successful check-in
-      if (newStatus === 'Checked-In') {
-        setVisitorTokens(prev => {
-          const newTokens = { ...prev };
-          delete newTokens[visitorId];
-          return newTokens;
-        });
-      }
     } catch (error) {
-      if (error.response && error.response.status === 401) {
-        showSnackbar('Invalid token', 'error');
-      } else {
-        showSnackbar('Error updating visitor status', 'error');
-      }
+      showSnackbar('Error updating visitor status', 'error');
     }
   };
 
@@ -217,9 +212,23 @@ const ReceptionistDashboard = () => {
               <Button
                 fullWidth
                 variant="outlined"
-                onClick={fetchTodayVisitors}
+                onClick={() => {
+                  fetchTodayVisitors();
+                }}
               >
                 Show Today's
+              </Button>
+            </Grid>
+            <Grid item xs={2}>
+              <Button
+                fullWidth
+                variant="outlined"
+                sx={{ ml: 2 }}
+                onClick={() => {
+                  fetchAllVisits();
+                }}
+              >
+                Show All
               </Button>
             </Grid>
           </Grid>
@@ -241,76 +250,70 @@ const ReceptionistDashboard = () => {
               </TableRow>
             </TableHead>
             <TableBody>
-              {visitors.map((visitor) => (
-                <TableRow key={visitor.id}>
-                  <TableCell>{visitor.name}</TableCell>
-                  <TableCell>{visitor.phone}</TableCell>
-                  <TableCell>{visitor.person_to_meet}</TableCell>
-                  <TableCell>{visitor.purpose}</TableCell>
-                  <TableCell>{visitor.department || '-'}</TableCell>
-                  <TableCell>
-                    {visitor.checkin_time ? new Date(visitor.checkin_time).toLocaleString('en-US', {
-                      year: 'numeric',
-                      month: 'numeric',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false
-                    }) : '-'}
-                  </TableCell>
-                  <TableCell>
-                    {visitor.checkout_time ? new Date(visitor.checkout_time).toLocaleString('en-US', {
-                      year: 'numeric',
-                      month: 'numeric',
-                      day: 'numeric',
-                      hour: '2-digit',
-                      minute: '2-digit',
-                      hour12: false
-                    }) : '-'}
-                  </TableCell>
-                  <TableCell>{visitor.status}</TableCell>
-                  <TableCell>
-                    {visitor.status === 'Pending' && (
-                      <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
-                        <TextField
-                          size="small"
-                          placeholder="Enter token"
-                          value={visitorTokens[visitor.id] || ''}
-                          onChange={(e) => handleTokenChange(visitor.id, e.target.value)}
-                        />
-                        <Button
-                          variant="outlined"
-                          color="info"
-                          size="small"
-                          onClick={() => verifyToken(visitor.id, visitorTokens[visitor.id])}
-                          disabled={!visitorTokens[visitor.id]}
-                        >
-                          Verify
-                        </Button>
+              {(visitors ?? []).map((visitor) => {
+                const vid = visitor.visit_id || visitor.id;
+                const vtoken = visitor.token;
+                return (
+                  <TableRow key={vid}>
+                    <TableCell>{visitor.visitor_name || visitor.name || '-'}</TableCell>
+                    <TableCell>{visitor.phone || '-'}</TableCell>
+                    <TableCell>{visitor.employee_name || visitor.person_to_meet || '-'}</TableCell>
+                    <TableCell>{visitor.purpose || '-'}</TableCell>
+                    <TableCell>{visitor.department_name || visitor.department || '-'}</TableCell>
+                    <TableCell>
+                      {visitor.checkin_time ? new Date(visitor.checkin_time).toLocaleString('en-US', {
+                        year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+                      }) : '-'}
+                    </TableCell>
+                    <TableCell>
+                      {visitor.checkout_time ? new Date(visitor.checkout_time).toLocaleString('en-US', {
+                        year: 'numeric', month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false
+                      }) : '-'}
+                    </TableCell>
+                    <TableCell>{visitor.status || '-'}</TableCell>
+                    <TableCell>
+                      {visitor.status === 'Pending' && (
+                        <Box sx={{ display: 'flex', gap: 1, alignItems: 'center' }}>
+                          <TextField
+                            size="small"
+                            placeholder="Enter token"
+                            value={visitorTokens[vid] || ''}
+                            onChange={(e) => handleTokenChange(vid, e.target.value)}
+                          />
+                          <Button
+                            variant="outlined"
+                            color="info"
+                            size="small"
+                            onClick={() => verifyToken(vid, visitorTokens[vid])}
+                            disabled={!visitorTokens[vid]}
+                          >
+                            Verify
+                          </Button>
+                          <Button
+                            variant="contained"
+                            color="primary"
+                            size="small"
+                            onClick={() => handleStatus(vtoken, 'Checked-In')}
+                            disabled={!verifiedTokens[vid]}
+                          >
+                            Check In
+                          </Button>
+                        </Box>
+                      )}
+                      {visitor.status === 'Checked-In' && (
                         <Button
                           variant="contained"
-                          color="primary"
+                          color="secondary"
                           size="small"
-                          onClick={() => handleStatus(visitor.id, 'Checked-In')}
-                          disabled={!verifiedTokens[visitor.id]}
+                          onClick={() => handleStatus(vtoken, 'Checked-Out')}
                         >
-                          Check In
+                          Check Out
                         </Button>
-                      </Box>
-                    )}
-                    {visitor.status === 'Checked-In' && (
-                      <Button
-                        variant="contained"
-                        color="secondary"
-                        size="small"
-                        onClick={() => handleStatus(visitor.id, 'Checked-Out')}
-                      >
-                        Check Out
-                      </Button>
-                    )}
-                  </TableCell>
-                </TableRow>
-              ))}
+                      )}
+                    </TableCell>
+                  </TableRow>
+                );
+              })}
             </TableBody>
           </Table>
         </TableContainer>

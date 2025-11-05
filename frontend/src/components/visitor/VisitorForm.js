@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
   Container,
   Paper,
@@ -8,7 +8,12 @@ import {
   Box,
   Snackbar,
   Alert,
-  Stack
+  Stack,
+  FormControl,
+  InputLabel,
+  Select,
+  MenuItem,
+  CircularProgress
 } from '@mui/material';
 import axios from 'axios';
 import { useNavigate } from 'react-router-dom';
@@ -20,9 +25,18 @@ const VisitorForm = () => {
     phone: '',
     email: '',
     address: '',
-    person_to_meet: '',
+    employee_id: '',
+    department_id: '',
     purpose: '',
-    department: ''
+    id_proof_type: '', // <-- add
+    id_proof_number: '' // <-- add
+  });
+  
+  const [departments, setDepartments] = useState([]);
+  const [employees, setEmployees] = useState([]);
+  const [loading, setLoading] = useState({
+    departments: true,
+    employees: false
   });
 
   const [formSubmitted, setFormSubmitted] = useState(false);
@@ -32,6 +46,48 @@ const VisitorForm = () => {
     message: '',
     severity: 'success'
   });
+
+  // Fetch departments on component mount
+  useEffect(() => {
+    const fetchDepartments = async () => {
+      try {
+        const response = await axios.get('http://localhost:5000/api/departments');
+        const depArr = Array.isArray(response.data.data) ? response.data.data : (Array.isArray(response.data) ? response.data : []);
+        setDepartments(depArr);
+        setLoading(prev => ({ ...prev, departments: false }));
+      } catch (error) {
+        console.error('Error fetching departments:', error);
+        setDepartments([]);
+        setLoading(prev => ({ ...prev, departments: false }));
+      }
+    };
+
+    fetchDepartments();
+  }, []);
+
+  // Fetch employees when department changes
+  useEffect(() => {
+    const fetchEmployees = async () => {
+      if (!formData.department_id) {
+        setEmployees([]);
+        return;
+      }
+      
+      try {
+        setLoading(prev => ({ ...prev, employees: true }));
+        const response = await axios.get(`http://localhost:5000/api/employees?department_id=${formData.department_id}`);
+        setEmployees(Array.isArray(response.data) ? response.data : []);
+        setFormData(prev => ({ ...prev, employee_id: '' })); // Reset employee selection
+      } catch (error) {
+        console.error('Error fetching employees:', error);
+        setEmployees([]);
+      } finally {
+        setLoading(prev => ({ ...prev, employees: false }));
+      }
+    };
+
+    fetchEmployees();
+  }, [formData.department_id]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;
@@ -46,7 +102,9 @@ const VisitorForm = () => {
     e.preventDefault();
     console.log('Submitting form data:', formData); // Debug log
     try {
-      const response = await axios.post('http://localhost:5000/api/visitors/register', formData);
+      // Defensive: only send employee_id value (string or number)
+      const submission = { ...formData, employee_id: formData.employee_id };
+      const response = await axios.post('http://localhost:5000/api/visitors/register', submission);
       console.log('Registration response:', response.data);
 
       // Store the response data first
@@ -72,7 +130,9 @@ const VisitorForm = () => {
         address: '',
         person_to_meet: '',
         purpose: '',
-        department: ''
+        department: '',
+        id_proof_type: '', // <-- add
+        id_proof_number: '' // <-- add
       });
     } catch (error) {
       console.error('Registration error:', error);
@@ -100,9 +160,11 @@ const VisitorForm = () => {
           <Typography variant="body1" gutterBottom>
             Please save your token for check-in:
           </Typography>
-          <Typography variant="h3" sx={{ my: 3, color: '#1976d2', fontWeight: 'bold' }}>
-            {submissionData.token}
-          </Typography>
+          {submissionData && submissionData.data && (
+            <Typography variant="h3" sx={{ my: 3, color: '#1976d2', fontWeight: 'bold' }}>
+              {submissionData.data.token}
+            </Typography>
+          )}
           <Typography variant="body2" color="text.secondary">
             Please take a screenshot or note down this token.
             You will need it when you arrive at the reception.
@@ -187,15 +249,47 @@ const VisitorForm = () => {
                 multiline
                 rows={3}
               />
-              <TextField
-                fullWidth
-                label="Person to Meet"
-                name="person_to_meet"
-                value={formData.person_to_meet}
-                onChange={handleInputChange}
-                required
-                margin="normal"
-              />
+              <FormControl fullWidth margin="normal" required>
+                <InputLabel id="department-label">Department</InputLabel>
+                <Select
+                  labelId="department-label"
+                  name="department_id"
+                  value={formData.department_id}
+                  onChange={handleInputChange}
+                  label="Department"
+                  disabled={loading.departments}
+                >
+                  <MenuItem value="">
+                    <em>Select Department</em>
+                  </MenuItem>
+                  {departments.map((dept) => (
+                    <MenuItem key={dept.id} value={dept.id}>
+                      {dept.name}
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
+
+              <FormControl fullWidth margin="normal" required>
+                <InputLabel id="employee-label">Person to Meet</InputLabel>
+                <Select
+                  labelId="employee-label"
+                  name="employee_id"
+                  value={formData.employee_id}
+                  onChange={handleInputChange}
+                  label="Person to Meet"
+                  disabled={!formData.department_id || loading.employees}
+                >
+                  <MenuItem value="">
+                    <em>Select Department First</em>
+                  </MenuItem>
+                  {employees.map((emp) => (
+                    <MenuItem key={emp.id} value={emp.employee_id}>
+                      {emp.name} ({emp.position})
+                    </MenuItem>
+                  ))}
+                </Select>
+              </FormControl>
               <TextField
                 fullWidth
                 label="Purpose of Visit"
@@ -204,26 +298,33 @@ const VisitorForm = () => {
                 onChange={handleInputChange}
                 required
                 margin="normal"
+                multiline
+                rows={3}
               />
               <TextField
-                select
                 fullWidth
-                label=""
-                name="department"
-                value={formData.department}
+                required
+                label="ID Proof Number"
+                name="id_proof_number"
+                value={formData.id_proof_number}
                 onChange={handleInputChange}
                 margin="normal"
-                required
-                SelectProps={{
-                  native: true,
-                }}
-              >
-                <option value="">Select Department</option>
-                <option value="CSE">CSE</option>
-                <option value="ECE">ECE</option>
-                <option value="Hostel">Hostel</option>
-                <option value="Delivery">Delivery</option>
-              </TextField>
+              />
+              <FormControl fullWidth margin="normal" required>
+                <InputLabel>ID Proof Type</InputLabel>
+                <Select
+                  name="id_proof_type"
+                  value={formData.id_proof_type}
+                  label="ID Proof Type"
+                  onChange={handleInputChange}
+                >
+                  <MenuItem value="Aadhar">Aadhar</MenuItem>
+                  <MenuItem value="PAN">PAN</MenuItem>
+                  <MenuItem value="Passport">Passport</MenuItem>
+                  <MenuItem value="Driving License">Driving License</MenuItem>
+                  <MenuItem value="Other">Other</MenuItem>
+                </Select>
+              </FormControl>
               <Button
                 type="submit"
                 variant="contained"
