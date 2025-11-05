@@ -34,12 +34,15 @@ db.execute('SELECT 1')
 const visitorRoutes = require('./routes/visitors');
 const receptionistRoutes = require('./routes/receptionists');
 const adminRoutes = require('./routes/admin');
-
+const employeeRoutes = require('./routes/employees');
+const departmentRoutes = require('./routes/departments');
 
 // API Routes
 app.use('/api/visitors', visitorRoutes);
 app.use('/api/receptionists', receptionistRoutes);
 app.use('/api/admin', adminRoutes);
+app.use('/api/employees', employeeRoutes);
+app.use('/api/departments', departmentRoutes);
 
 
 
